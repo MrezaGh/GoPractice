@@ -10,7 +10,12 @@
 
 package main
 
-import "time"
+import (
+	"sync/atomic"
+	"time"
+)
+
+const Threshold = 10
 
 // User defines the UserModel. Use this to check whether a User is a
 // Premium user or not
@@ -20,24 +25,35 @@ type User struct {
 	TimeUsed  int64 // in seconds
 }
 
+func (u *User) incrementTime() int64 {
+	return atomic.AddInt64(&u.TimeUsed, 1)
+}
+
 // HandleRequest runs the processes requested by users. Returns false
 // if process had to be killed
 func HandleRequest(process func(), u *User) bool {
+	if u.IsPremium {
+		process()
+		return true
+	}
+
 	done := make(chan int)
 	go func() {
 		process()
 		close(done)
 	}()
-	throttle := time.Tick(10 * time.Second)
-	if u.IsPremium {
-		throttle = make(chan time.Time)
+
+	for {
+		select {
+		case <-done:
+			return true
+		case <-time.Tick(1 * time.Second):
+			if timeUsed := u.incrementTime(); timeUsed >= Threshold {
+				return false
+			}
+		}
 	}
-	select {
-	case <-done:
-	case <-throttle:
-		return false
-	}
-	return true
+
 }
 
 func main() {
